@@ -27,7 +27,7 @@ type IBObjectManager interface {
 	CreateNetworkContainer(netview string, cidr string, isIPv6 bool, comment string, eas EA) (*NetworkContainer, error)
 	CreateNetworkView(name string, comment string, setEas EA) (*NetworkView, error)
 	CreatePTRRecord(networkView string, dnsView string, ptrdname string, recordName string, cidr string, ipAddr string, useTtl bool, ttl uint32, comment string, eas EA) (*RecordPTR, error)
-	CreateTXTRecord(recordname string, text string, ttl uint, dnsview string) (*RecordTXT, error)
+	CreateTXTRecord(recordName string, text string, dnsView string, useTtl bool, ttl uint32, comment string, eas EA) (*RecordTXT, error)
 	CreateZoneDelegated(fqdn string, delegate_to []NameServer) (*ZoneDelegated, error)
 	DeleteARecord(ref string) (string, error)
 	DeleteAAAARecord(ref string) (string, error)
@@ -61,6 +61,8 @@ type IBObjectManager interface {
 	GetNetworkViewByRef(ref string) (*NetworkView, error)
 	GetPTRRecord(dnsview string, ptrdname string, recordName string, ipAddr string) (*RecordPTR, error)
 	GetPTRRecordByRef(ref string) (*RecordPTR, error)
+	GetTXTRecord(name string) (*RecordTXT, error)
+	GetTXTRecordByRef(ref string) (*RecordTXT, error)
 	GetZoneAuthByRef(ref string) (*ZoneAuth, error)
 	GetZoneDelegated(fqdn string) (*ZoneDelegated, error)
 	GetCapacityReport(name string) ([]CapacityReport, error)
@@ -77,6 +79,7 @@ type IBObjectManager interface {
 	UpdateNetworkContainer(ref string, setEas EA, comment string) (*NetworkContainer, error)
 	UpdateNetworkView(ref string, name string, comment string, setEas EA) (*NetworkView, error)
 	UpdatePTRRecord(ref string, netview string, ptrdname string, name string, cidr string, ipAddr string, useTtl bool, ttl uint32, comment string, setEas EA) (*RecordPTR, error)
+	UpdateTXTRecord(ref string, recordName string, text string, useTtl bool, ttl uint32, comment string, eas EA) (*RecordTXT, error)
 	UpdateARecord(ref string, name string, ipAddr string, cidr string, netview string, ttl uint32, useTTL bool, comment string, eas EA) (*RecordA, error)
 	UpdateZoneDelegated(ref string, delegate_to []NameServer) (*ZoneDelegated, error)
 }
@@ -216,7 +219,7 @@ func (objMgr *ObjectManager) UpdateNetworkView(ref string, name string, comment 
 	if cleanName != "" {
 		nv.Name = cleanName
 	}
-    nv.Comment = comment
+	nv.Comment = comment
 	nv.Ea = setEas
 
 	updatedRef, err := objMgr.connector.UpdateObject(nv, ref)
@@ -1241,22 +1244,27 @@ func (objMgr *ObjectManager) UpdateCNAMERecord(
 }
 
 // Creates TXT Record. Use TTL of 0 to inherit TTL from the Zone
-func (objMgr *ObjectManager) CreateTXTRecord(recordname string, text string, ttl uint, dnsview string) (*RecordTXT, error) {
+func (objMgr *ObjectManager) CreateTXTRecord(
+	recordName string,
+	text string,
+	dnsView string,
+	useTtl bool,
+	ttl uint32,
+	comment string,
+	eas EA) (*RecordTXT, error) {
 
-	recordTXT := NewRecordTXT(RecordTXT{
-		View: dnsview,
-		Name: recordname,
-		Text: text,
-		Ttl:  ttl,
-	})
+	recordTXT := NewRecordTXT(recordName, text, dnsView, "", useTtl, ttl, comment, eas)
 
 	ref, err := objMgr.connector.CreateObject(recordTXT)
-	recordTXT.Ref = ref
+	if err != nil {
+		return nil, err
+	}
+	recordTXT, err = objMgr.GetTXTRecordByRef(ref)
 	return recordTXT, err
 }
 
 func (objMgr *ObjectManager) GetTXTRecordByRef(ref string) (*RecordTXT, error) {
-	recordTXT := NewRecordTXT(RecordTXT{})
+	recordTXT := NewEmptyRecordTXT()
 	err := objMgr.connector.GetObject(
 		recordTXT, ref, NewQueryParams(false, nil), &recordTXT)
 	return recordTXT, err
@@ -1268,7 +1276,7 @@ func (objMgr *ObjectManager) GetTXTRecord(name string) (*RecordTXT, error) {
 	}
 	var res []RecordTXT
 
-	recordTXT := NewRecordTXT(RecordTXT{})
+	recordTXT := NewEmptyRecordTXT()
 
 	sf := map[string]string{
 		"name": name,
@@ -1283,32 +1291,25 @@ func (objMgr *ObjectManager) GetTXTRecord(name string) (*RecordTXT, error) {
 	return &res[0], nil
 }
 
-func (objMgr *ObjectManager) UpdateTXTRecord(recordname string, text string) (*RecordTXT, error) {
-	var res []RecordTXT
+func (objMgr *ObjectManager) UpdateTXTRecord(
+	ref string,
+	recordName string,
+	text string,
+	useTtl bool,
+	ttl uint32,
+	comment string,
+	eas EA) (*RecordTXT, error) {
 
-	recordTXT := NewRecordTXT(RecordTXT{Name: recordname})
+	recordTXT := NewRecordTXT(recordName, text, "", "", useTtl, ttl, comment, eas)
+	recordTXT.Ref = ref
 
-	sf := map[string]string{
-		"name": recordname,
-	}
-	queryParams := NewQueryParams(false, sf)
-	err := objMgr.connector.GetObject(recordTXT, "", queryParams, &res)
-
-	if len(res) == 0 {
-		return nil, nil
-	}
-
-	res[0].Text = text
-
-	res[0].Zone = "" //  set the Zone value to "" as its a non writable field
-
-	_, err = objMgr.connector.UpdateObject(&res[0], res[0].Ref)
-
-	if err != nil || res == nil || len(res) == 0 {
+	reference, err := objMgr.connector.UpdateObject(recordTXT, ref)
+	if err != nil {
 		return nil, err
 	}
 
-	return &res[0], nil
+	recordTXT, err = objMgr.GetTXTRecordByRef(reference)
+	return recordTXT, err
 }
 
 func (objMgr *ObjectManager) DeleteTXTRecord(ref string) (string, error) {
